@@ -16,5 +16,11 @@ easy_install --upgrade androidviewclient
 ```
 * aapt: <https://code.google.com/p/android-apktool/>
 
+## Usage
+Write your own config file and run
+``` python
+python apkcheck.py test_conf.json
+```
+
 ## License
 This project is under the MIT License. See the [LICENSE](LICENSE) file for the full license text.
