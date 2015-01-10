@@ -33,6 +33,7 @@ class ApkChecker(object):
         self.adb = self.connect()
 
     def check(self):
+
         pass
 
     def adb_device(self):
