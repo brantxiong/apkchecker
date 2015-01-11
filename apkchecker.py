@@ -35,6 +35,7 @@ class ApkChecker(object):
         self.activity = self.result['apk_result']['launch_activity']
         # begin connect to phone
         self.adb = self.connect()
+        self.logcat = None
 
     def read_conf(self, conf_file):
         if not os.path.exists(conf_file):
@@ -71,7 +72,11 @@ class ApkChecker(object):
     def check(self):
         self.unlock_device()
         # self.install_apk()
+        self.start_logcat()
         # self.start_app()
+        self.read_logcat()
+        print 'fuck'
+        self.read_logcat()
         print self.get_cpu_data()
         self.lock_device()
         self._save_result()
@@ -118,12 +123,17 @@ class ApkChecker(object):
 
     def start_logcat(self):
         # clear log before starting logcat
-        adb_clear_cmd = 'adb -s {0} logcat -c'.format(self.serialno)
+        adb_clear_cmd = shlex.split('adb -s {0} logcat -c'.format(self.serialno))
         adb_clear = subprocess.Popen(adb_clear_cmd)
         while adb_clear.poll() is None:
             pass
-        adb_logcat_cmd = 'adb -s {0} logcat'.format(self.serialno)
-        adb_logcat = subprocess.Popen(adb_logcat_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+        adb_logcat_cmd = shlex.split('adb -s {0} logcat'.format(self.serialno))
+        self.logcat = subprocess.Popen(adb_logcat_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
+
+    def read_logcat(self):
+        lines_iterator = iter(self.logcat.stdout.readline, "")
+        for line in lines_iterator:
+            print line
 
     def _run_wrapper(self, cmd):
         ret = self.run_cmd(cmd)
