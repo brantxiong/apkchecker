@@ -30,6 +30,8 @@ class ApkChecker(object):
 
         # get apk file basic info
         self.get_apk_info()
+        self.package = self.result['apk_result']['package_name']
+        self.activity = self.result['apk_result']['launch_activity']
         # begin connect to phone
         self.adb = self.connect()
 
@@ -56,19 +58,61 @@ class ApkChecker(object):
         # check devices is connected
         ret = self._run_wrapper('adb devices')
         if self.serialno not in ret:
-            self._error_log('Device {0} not connected'.format(self.serialno))
+            self._error_log('device {0} not connected'.format(self.serialno))
         # connecting to device
         try:
-            return ViewClient.connectToDeviceOrExit(verbose=False, serialno=self.serialno)
+            _adb, _serialno = ViewClient.connectToDeviceOrExit(verbose=False, serialno=self.serialno)
+            return _adb
         except Exception as e:
-            self._error_log('Connecting to Android Device {0} Failed: {1}'.format(self.serialno, e))
+            self._error_log('connecting to Android Device {0} Failed: {1}'.format(self.serialno, e))
 
     def check(self):
-        self.install_apk()
+        self.unlock_device()
+        # self.install_apk()
+        # self.start_app()
+        print self.get_cpu_data()
+        self.lock_device()
         self._save_result()
 
+    def unlock_device(self):
+        try:
+            # wake screen on
+            self.adb.wake()
+            # try unlock screen
+            if self.adb.isLocked():
+                (w, h) = (self.adb.getProperty("display.width"), self.adb.getProperty("display.height"))
+                self.adb.drag((w * 0.5, h * 0.7), (w, h * 0.7))
+        except Exception as e:
+            self._error_log('device not support screen unlock: {0}'.format(e))
+
+    def lock_device(self):
+        if self.adb.isScreenOn():
+            self.adb.shell('input keyevent POWER')
+
     def install_apk(self):
-        self._run_wrapper('adb -d {0} install -r {1}'.format(self.serialno, self.apk_file))
+        self._run_wrapper('adb -s {0} install -r {1}'.format(self.serialno, self.apk_file))
+
+    def start_app(self):
+        self._run_wrapper('adb shell am start -n {0}/{1}'.format(self.package, self.activity))
+
+    def is_app_alive(self):
+        if self.package in self.adb.shell('ps'):
+            return True
+        return False
+
+    def get_mem_data(self):
+        ret = self.adb.shell('dumpsys meminfo {0}'.format(self.package))
+        mem = re.search("(?<=TOTAL)\s+\d+", ret).group().lstrip()
+        return round(float(mem)/1024, 2)
+
+    def get_cpu_data(self):
+        ret = self.adb.shell('dumpsys cpuinfo {0}'.format(self.package))
+        cpu = re.search("\d+(?=%\sTOTAL)", ret).group()
+        return round(float(cpu), 2)
+
+    def take_screen_shot(self, timestamp):
+        full_file_path = '{0}/{1}.png'.format(self.screenshot_path, timestamp)
+        self.adb.takeSnapshot(reconnect=True).save(full_file_path, 'PNG')
 
     def _run_wrapper(self, cmd):
         ret = self.run_cmd(cmd)
