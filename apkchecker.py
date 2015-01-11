@@ -44,6 +44,7 @@ class ApkChecker(object):
         if not os.path.exists(self.apk_file):
             self._error_log('apk file: {0} not found'.format(self.apk_file))
         # get apk file info
+        self.result['apk_result']['file_name'] = os.path.basename(self.apk_file)
         self.result['apk_result']['file_size'] = os.path.getsize(self.apk_file)
         self.result['apk_result']['file_md5'] = hashlib.md5(open(self.apk_file, 'rb').read()).hexdigest()
         # dump apk package info
@@ -68,7 +69,7 @@ class ApkChecker(object):
 
     def check(self):
         self.unlock_device()
-        # self.install_apk()
+        self.install_apk()
         # self.start_app()
         print self.get_cpu_data()
         self.lock_device()
@@ -90,7 +91,9 @@ class ApkChecker(object):
             self.adb.shell('input keyevent POWER')
 
     def install_apk(self):
-        self._run_wrapper('adb -s {0} install -r {1}'.format(self.serialno, self.apk_file))
+        ret = self._run_wrapper('adb -s {0} install {1}'.format(self.serialno, self.apk_file))
+        if "Failure " in ret:
+            self._error_log('install {0} to device {1} failed: {2}'.format(self.apk_file, self.serialno, ret))
 
     def start_app(self):
         self._run_wrapper('adb shell am start -n {0}/{1}'.format(self.package, self.activity))
