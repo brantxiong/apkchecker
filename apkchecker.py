@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import calendar
+import hashlib
 import json
 import os
 import shlex
@@ -9,15 +10,14 @@ from datetime import datetime
 import collections
 import traceback
 from com.dtmilano.android.viewclient import ViewClient
+import re
 
 
 class ApkChecker(object):
     def __init__(self, conf_file):
         # initialize check_result dict
-        self.check_result = collections.defaultdict(lambda: collections.defaultdict(dict))
-        self.check_result['apk_check_result']['finish'] = 0
-        self.check_result['apk_check_result']['passed'] = 0
-        self.check_result['running_log'] = []
+        self.result = collections.defaultdict(lambda: collections.defaultdict(dict))
+        self.result['running_log'] = []
         self.conf_data = self.read_conf(conf_file)
 
         try:
@@ -26,33 +26,58 @@ class ApkChecker(object):
             self.screenshot_path = self.conf_data['screenshot_path']
             self.log_verbose = self.conf_data['log_verbose']
         except KeyError:
-            self.error_log(traceback.format_exc())
+            self._error_log(traceback.format_exc())
 
+        # get apk file basic info
+        self.get_apk_info()
         # begin connect to phone
-        self.adb_device()
         self.adb = self.connect()
 
     def check(self):
-
+        self._save_result()
         pass
 
+    def get_apk_info(self):
+        if not os.path.exists(self.apk_file):
+            self._error_log('apk file: {0} not found'.format(self.apk_file))
+        # get apk file info
+        self.result['apk_check_result']['file_size'] = os.path.getsize(self.apk_file)
+        self.result['apk_check_result']['file_md5'] = hashlib.md5(open(self.apk_file, 'rb').read()).hexdigest()
+        # dump apk package info
+        cmd = 'aapt dump badging {0}'.format(self.apk_file)
+        ret = self.run_cmd(cmd)
+        if ret['retcode'] != 0:
+            self._error_log(ret['retval'])
+        self._cmd_log(cmd, ret['retval'])
+        # get apk package info
+        self.result['apk_check_result']['package_name'] = \
+            re.search("(?<=package: name=')[^']+", ret['retval']).group()
+        self.result['apk_check_result']['version_code'] = \
+            re.search("(?<=versionCode=')[^']+", ret['retval']).group()
+        self.result['apk_check_result']['version_name'] = \
+            re.search("(?<=versionName=')[^']+", ret['retval']).group()
+        self.result['apk_check_result']['launch_activity'] = \
+            re.search("(?<=launchable-activity: name=')[^']+", ret['retval']).group()
+
     def adb_device(self):
-        ret = self.run_cmd("adb devices")
-        if ret["retcode"] != 0:
-            self.error_log(ret['retval'])
+        cmd = 'adb devices'
+        ret = self.run_cmd(cmd)
+        if ret['retcode'] != 0:
+            self._error_log(ret['retval'])
         if self.serialno not in ret['retval']:
-            self.error_log("Device {0} not connected".format(self.serialno))
-        self.cmd_log("adb devices", ret['retval'])
+            self._error_log('Device {0} not connected'.format(self.serialno))
+        self._cmd_log(cmd, ret['retval'])
 
     def connect(self):
+        self.adb_device()
         try:
             return ViewClient.connectToDeviceOrExit(verbose=False, serialno=self.serialno)
         except Exception as e:
-            self.error_log('Connecting to Android Device {0} Failed: {1}'.format(self.serialno, e))
+            self._error_log('Connecting to Android Device {0} Failed: {1}'.format(self.serialno, e))
 
     def read_conf(self, conf_file):
         if not os.path.exists(conf_file):
-            self.error_log("apk conf_file: {0} not found".format(conf_file))
+            self._error_log('apk conf_file: {0} not found'.format(conf_file))
         return json.load(open(conf_file))
 
     @staticmethod
@@ -63,43 +88,55 @@ class ApkChecker(object):
             stdout, stderr = child.communicate()
             retcode = child.returncode
             if retcode is 0:
-                result = {"retcode": retcode, "retval": stdout}
+                result = {'retcode': retcode, 'retval': stdout}
             else:
-                result = {"retcode": retcode, "retval": stderr}
+                result = {'retcode': retcode, 'retval': stderr}
             return result
         else:
             return child.pid
 
-    def error_log(self, content):
+    def _error_log(self, content):
         log_content = {
-            "timestamp": calendar.timegm(datetime.now().utctimetuple()),
-            "content": content
+            'timestamp': calendar.timegm(datetime.now().utctimetuple()),
+            'content': content
         }
-        self.check_result['apk_check_result']['finish'] = 0
-        self.check_result['error_log'] = log_content
-        self.save_result()
+        self._check_not_finished()
+        self.result['error_log'] = log_content
+        self._save_result()
         print >> sys.stderr, log_content
         sys.exit(1)
 
-    def cmd_log(self, cmd, ret, level='v'):
+    def _cmd_log(self, cmd, ret, level='v'):
         log_content = {
-            "timestamp": calendar.timegm(datetime.now().utctimetuple()),
-            "type": 'cmd',
-            "level": level,
-            "cmd": cmd,
-            "ret": ret
+            'timestamp': calendar.timegm(datetime.now().utctimetuple()),
+            'type': 'cmd',
+            'level': level,
+            'cmd': cmd,
+            'ret': ret
         }
-        self.check_result['running_log'].append(log_content)
+        self.result['running_log'].append(log_content)
         if self.log_verbose:
             print >> sys.stdout, log_content
 
-    def save_result(self, filename="check_result.json"):
-        with open(filename, "w") as outfile:
-            json.dump(self.check_result, outfile, sort_keys=True, indent=4, separators=(',', ': '))
+    def _check_finished(self):
+        self.result['apk_check_result']['finished'] = 1
+
+    def _check_not_finished(self):
+        self.result['apk_check_result']['finished'] = 0
+
+    def _check_passed(self):
+        self.result['apk_check_result']['passed'] = 1
+
+    def _check_not_passed(self):
+        self.result['apk_check_result']['passed'] = 0
+
+    def _save_result(self, filename='check_result.json'):
+        with open(filename, 'w') as outfile:
+            json.dump(self.result, outfile, sort_keys=True, indent=4, separators=(',', ': '))
 
 
 if __name__ == '__main__':
-    apk_checker = ApkChecker("test_conf.json")
+    apk_checker = ApkChecker('test_conf.json')
     apk_checker.check()
 
 
