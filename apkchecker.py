@@ -5,6 +5,7 @@ import json
 import os
 import shlex
 import subprocess
+from subprocess import PIPE
 import sys
 from datetime import datetime
 import collections
@@ -69,7 +70,7 @@ class ApkChecker(object):
 
     def check(self):
         self.unlock_device()
-        self.install_apk()
+        # self.install_apk()
         # self.start_app()
         print self.get_cpu_data()
         self.lock_device()
@@ -99,9 +100,7 @@ class ApkChecker(object):
         self._run_wrapper('adb shell am start -n {0}/{1}'.format(self.package, self.activity))
 
     def is_app_alive(self):
-        if self.package in self.adb.shell('ps'):
-            return True
-        return False
+        return True if self.package in self.adb.shell('ps') else False
 
     def get_mem_data(self):
         ret = self.adb.shell('dumpsys meminfo {0}'.format(self.package))
@@ -113,9 +112,18 @@ class ApkChecker(object):
         cpu = re.search("\d+(?=%\sTOTAL)", ret).group()
         return round(float(cpu), 2)
 
-    def take_screen_shot(self, timestamp):
+    def take_screenshot(self, timestamp):
         full_file_path = '{0}/{1}.png'.format(self.screenshot_path, timestamp)
         self.adb.takeSnapshot(reconnect=True).save(full_file_path, 'PNG')
+
+    def start_logcat(self):
+        # clear log before starting logcat
+        adb_clear_cmd = 'adb -s {0} logcat -c'.format(self.serialno)
+        adb_clear = subprocess.Popen(adb_clear_cmd)
+        while adb_clear.poll() is None:
+            pass
+        adb_logcat_cmd = 'adb -s {0} logcat'.format(self.serialno)
+        adb_logcat = subprocess.Popen(adb_logcat_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
     def _run_wrapper(self, cmd):
         ret = self.run_cmd(cmd)
@@ -127,7 +135,7 @@ class ApkChecker(object):
     @staticmethod
     def run_cmd(cmd, cwd=None, daemon=False):
         args = map(lambda s: s.decode('utf-8'), shlex.split(cmd.encode('utf-8')))
-        child = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+        child = subprocess.Popen(args, stdout=PIPE, stderr=PIPE, cwd=cwd)
         if not daemon:
             stdout, stderr = child.communicate()
             retcode = child.returncode
