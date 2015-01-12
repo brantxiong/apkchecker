@@ -2,12 +2,14 @@
 import calendar
 import hashlib
 import json
+from multiprocessing import Process
 import os
 import shlex
 import subprocess
 from subprocess import PIPE
 import sys
 from datetime import datetime
+import time
 import collections
 import traceback
 from com.dtmilano.android.viewclient import ViewClient
@@ -19,6 +21,8 @@ class ApkChecker(object):
         # initialize check_result dict
         self.result = collections.defaultdict(lambda: collections.defaultdict(dict))
         self.result['running_log'] = []
+        self._check_not_finished()
+        self._check_not_passed()
         self.conf_data = self.read_conf(conf_file)
 
         try:
@@ -35,7 +39,6 @@ class ApkChecker(object):
         self.activity = self.result['apk_result']['launch_activity']
         # begin connect to phone
         self.adb = self.connect()
-        self.logcat = None
 
     def read_conf(self, conf_file):
         if not os.path.exists(conf_file):
@@ -73,11 +76,11 @@ class ApkChecker(object):
         self.unlock_device()
         # self.install_apk()
         self.gather_info()
-        # self.start_logcat()
+        self.start_logcat_daemon()
         self.start_app()
-        while True:
+        while not self._is_check_finished():
             self.gather_info()
-        # self.read_logcat()
+            print "Parent: {0}".format(self._is_check_finished())
         self.lock_device()
         self._save_result()
 
@@ -108,7 +111,7 @@ class ApkChecker(object):
         return True if self.package in self.adb.shell('ps') else False
 
     def gather_info(self):
-        timestamp = self.get_timestamp
+        timestamp = self.get_timestamp()
         self._data_log(timestamp=timestamp, cpu_data=self.get_cpu_data(), mem_data=self.get_mem_data(),
                        screenshot=self.take_screenshot(timestamp))
 
@@ -133,6 +136,20 @@ class ApkChecker(object):
         self.adb.takeSnapshot(reconnect=True).save(full_file_path, 'PNG')
         return '{0}.png'.format(timestamp)
 
+    def start_logcat_daemon(self):
+        logcat_watcher = Process(target=self.watch_logcat)
+        logcat_watcher.daemon = True
+        logcat_watcher.start()
+
+    def watch_logcat(self):
+        logcat = self.start_logcat()
+        for i in range(1, 10):
+            print "watching logcat: {0}".format(i)
+            time.sleep(1)
+        print "changing varible..."
+        self._check_finished()
+        print "changing varible done..:{0}".format(self._is_check_finished())
+
     def start_logcat(self):
         # clear log before starting logcat
         adb_clear_cmd = shlex.split('adb -s {0} logcat -c'.format(self.serialno))
@@ -140,12 +157,7 @@ class ApkChecker(object):
         while adb_clear.poll() is None:
             pass
         adb_logcat_cmd = shlex.split('adb -s {0} logcat'.format(self.serialno))
-        self.logcat = subprocess.Popen(adb_logcat_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
-
-    def read_logcat(self):
-        lines_iterator = iter(self.logcat.stdout.readline, "")
-        for line in lines_iterator:
-            print line
+        return subprocess.Popen(adb_logcat_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
     def _run_wrapper(self, cmd):
         ret = self.run_cmd(cmd)
@@ -175,7 +187,7 @@ class ApkChecker(object):
 
     def _error_log(self, content):
         log_content = {
-            'timestamp': self.get_timestamp,
+            'timestamp': self.get_timestamp(),
             'content': content
         }
         self._check_not_finished()
@@ -186,11 +198,23 @@ class ApkChecker(object):
 
     def _cmd_log(self, cmd, ret, level='v'):
         log_content = {
-            'timestamp': self.get_timestamp,
+            'timestamp': self.get_timestamp(),
             'type': 'cmd',
             'level': level,
             'cmd': cmd,
             'ret': ret
+        }
+        self.result['running_log'].append(log_content)
+        if self.log_verbose:
+            print >> sys.stdout, log_content
+
+    def _logcat_data(self, tag, text, level):
+        log_content = {
+            'timestamp': self.get_timestamp(),
+            'type': 'data',
+            'tag': tag,
+            'text': text,
+            'level': level
         }
         self.result['running_log'].append(log_content)
         if self.log_verbose:
@@ -207,6 +231,9 @@ class ApkChecker(object):
         self.result['running_log'].append(log_content)
         if self.log_verbose:
             print >> sys.stdout, log_content
+
+    def _is_check_finished(self):
+        return self.result['apk_result']['finished']
 
     def _check_finished(self):
         self.result['apk_result']['finished'] = 1
@@ -228,5 +255,3 @@ class ApkChecker(object):
 if __name__ == '__main__':
     apk_checker = ApkChecker('test_conf.json')
     apk_checker.run_check()
-
-
