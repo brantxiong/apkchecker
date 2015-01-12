@@ -2,7 +2,7 @@
 import calendar
 import hashlib
 import json
-from multiprocessing import Process
+from multiprocessing import Process, Manager
 import os
 import shlex
 import subprocess
@@ -24,6 +24,9 @@ class ApkChecker(object):
         self._check_not_finished()
         self._check_not_passed()
         self.conf_data = self.read_conf(conf_file)
+        # manipulate locat data between process
+        manager = Manager()
+        self.logcat_data = manager.dict()
 
         try:
             self.apk_file = self.conf_data['apk_file']
@@ -76,11 +79,11 @@ class ApkChecker(object):
         self.unlock_device()
         # self.install_apk()
         self.gather_info()
-        self.start_logcat_daemon()
+        logcat_watcher = self.start_logcat_daemon()
         self.start_app()
-        while not self._is_check_finished():
+        while logcat_watcher.is_alive():
             self.gather_info()
-            print "Parent: {0}".format(self._is_check_finished())
+        print self.logcat_data
         self.lock_device()
         self._save_result()
 
@@ -137,18 +140,16 @@ class ApkChecker(object):
         return '{0}.png'.format(timestamp)
 
     def start_logcat_daemon(self):
-        logcat_watcher = Process(target=self.watch_logcat)
+        logcat_watcher = Process(target=self.watch_logcat, args=(self.logcat_data,))
         logcat_watcher.daemon = True
         logcat_watcher.start()
+        return logcat_watcher
 
-    def watch_logcat(self):
-        logcat = self.start_logcat()
+    def watch_logcat(self, logcat_data):
+        logcat_subp = self.start_logcat()
         for i in range(1, 10):
-            print "watching logcat: {0}".format(i)
+            logcat_data[i] = i
             time.sleep(1)
-        print "changing varible..."
-        self._check_finished()
-        print "changing varible done..:{0}".format(self._is_check_finished())
 
     def start_logcat(self):
         # clear log before starting logcat
@@ -231,9 +232,6 @@ class ApkChecker(object):
         self.result['running_log'].append(log_content)
         if self.log_verbose:
             print >> sys.stdout, log_content
-
-    def _is_check_finished(self):
-        return self.result['apk_result']['finished']
 
     def _check_finished(self):
         self.result['apk_result']['finished'] = 1
