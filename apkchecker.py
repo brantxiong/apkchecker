@@ -108,7 +108,7 @@ class ApkChecker(object):
         return True if self.package in self.adb.shell('ps') else False
 
     def gather_info(self):
-        timestamp = calendar.timegm(datetime.now().utctimetuple())
+        timestamp = self.get_timestamp
         self._data_log(timestamp=timestamp, cpu_data=self.get_cpu_data(), mem_data=self.get_mem_data(),
                        screenshot=self.take_screenshot(timestamp))
 
@@ -169,9 +169,13 @@ class ApkChecker(object):
         else:
             return child.pid
 
+    @staticmethod
+    def get_timestamp():
+        return calendar.timegm(datetime.now().utctimetuple())
+
     def _error_log(self, content):
         log_content = {
-            'timestamp': calendar.timegm(datetime.now().utctimetuple()),
+            'timestamp': self.get_timestamp,
             'content': content
         }
         self._check_not_finished()
@@ -182,7 +186,7 @@ class ApkChecker(object):
 
     def _cmd_log(self, cmd, ret, level='v'):
         log_content = {
-            'timestamp': calendar.timegm(datetime.now().utctimetuple()),
+            'timestamp': self.get_timestamp,
             'type': 'cmd',
             'level': level,
             'cmd': cmd,
