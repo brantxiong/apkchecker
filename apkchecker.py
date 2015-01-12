@@ -69,15 +69,15 @@ class ApkChecker(object):
         except Exception as e:
             self._error_log('connecting to Android Device {0} Failed: {1}'.format(self.serialno, e))
 
-    def check(self):
+    def run_check(self):
         self.unlock_device()
         # self.install_apk()
-        self.start_logcat()
-        # self.start_app()
-        self.read_logcat()
-        print 'fuck'
-        self.read_logcat()
-        print self.get_cpu_data()
+        self.gather_info()
+        # self.start_logcat()
+        self.start_app()
+        while True:
+            self.gather_info()
+        # self.read_logcat()
         self.lock_device()
         self._save_result()
 
@@ -107,19 +107,31 @@ class ApkChecker(object):
     def is_app_alive(self):
         return True if self.package in self.adb.shell('ps') else False
 
+    def gather_info(self):
+        timestamp = calendar.timegm(datetime.now().utctimetuple())
+        self._data_log(timestamp=timestamp, cpu_data=self.get_cpu_data(), mem_data=self.get_mem_data(),
+                       screenshot=self.take_screenshot(timestamp))
+
     def get_mem_data(self):
         ret = self.adb.shell('dumpsys meminfo {0}'.format(self.package))
-        mem = re.search("(?<=TOTAL)\s+\d+", ret).group().lstrip()
-        return round(float(mem)/1024, 2)
+        mem_regex = re.search("(?<=TOTAL)\s+\d+", ret)
+        mem = mem_regex.group().lstrip() if mem_regex else 0
+        return round(float(mem) / 1024, 2)
 
     def get_cpu_data(self):
-        ret = self.adb.shell('dumpsys cpuinfo {0}'.format(self.package))
-        cpu = re.search("\d+(?=%\sTOTAL)", ret).group()
+        ret = self.adb.shell('dumpsys cpuinfo')
+        cpu_line = filter(lambda line: self.package in line, ret.splitlines())
+        if cpu_line:
+            cpu_regex = re.search("\d+(?=% )", cpu_line[0])
+            cpu = cpu_regex.group()
+        else:
+            cpu = 0
         return round(float(cpu), 2)
 
     def take_screenshot(self, timestamp):
         full_file_path = '{0}/{1}.png'.format(self.screenshot_path, timestamp)
         self.adb.takeSnapshot(reconnect=True).save(full_file_path, 'PNG')
+        return '{0}.png'.format(timestamp)
 
     def start_logcat(self):
         # clear log before starting logcat
@@ -180,6 +192,18 @@ class ApkChecker(object):
         if self.log_verbose:
             print >> sys.stdout, log_content
 
+    def _data_log(self, timestamp, cpu_data, mem_data, screenshot):
+        log_content = {
+            'timestamp': timestamp,
+            'type': 'data',
+            'cpu_data': cpu_data,
+            'mem_data': mem_data,
+            'screenshot': screenshot
+        }
+        self.result['running_log'].append(log_content)
+        if self.log_verbose:
+            print >> sys.stdout, log_content
+
     def _check_finished(self):
         self.result['apk_result']['finished'] = 1
 
@@ -199,6 +223,6 @@ class ApkChecker(object):
 
 if __name__ == '__main__':
     apk_checker = ApkChecker('test_conf.json')
-    apk_checker.check()
+    apk_checker.run_check()
 
 
