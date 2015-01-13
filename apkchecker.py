@@ -26,7 +26,7 @@ class ApkChecker(object):
         self.conf_data = self.read_conf(conf_file)
         # manipulate locat data between process
         manager = Manager()
-        self.logcat_data = manager.dict()
+        self.logcat_data = manager.list()
 
         try:
             self.apk_file = self.conf_data['apk_file']
@@ -84,6 +84,7 @@ class ApkChecker(object):
         while logcat_watcher.is_alive():
             self.gather_info()
         print self.logcat_data
+        self._save_logcat_data()
         self.lock_device()
         self._save_result()
 
@@ -148,8 +149,17 @@ class ApkChecker(object):
     def watch_logcat(self, logcat_data):
         logcat_subp = self.start_logcat()
         for i in range(1, 10):
-            logcat_data[i] = i
+            log_content = {
+                'timestamp': self.get_timestamp(),
+                'type': 'logcat',
+                'tag': 'tag{0}'.format(i),
+                'text': 'text{0}'.format(i),
+                'level': 'level{0}'.format(i)
+            }
             time.sleep(1)
+            if self.log_verbose:
+                print >> sys.stdout, log_content
+            logcat_data.append(log_content)
 
     def start_logcat(self):
         # clear log before starting logcat
@@ -209,17 +219,8 @@ class ApkChecker(object):
         if self.log_verbose:
             print >> sys.stdout, log_content
 
-    def _logcat_data(self, tag, text, level):
-        log_content = {
-            'timestamp': self.get_timestamp(),
-            'type': 'data',
-            'tag': tag,
-            'text': text,
-            'level': level
-        }
-        self.result['running_log'].append(log_content)
-        if self.log_verbose:
-            print >> sys.stdout, log_content
+    def _save_logcat_data(self):
+        self.result['running_log'].extend(self.logcat_data)
 
     def _data_log(self, timestamp, cpu_data, mem_data, screenshot):
         log_content = {
