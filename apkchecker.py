@@ -78,15 +78,15 @@ class ApkChecker(object):
 
     def run_check(self):
         self.unlock_device()
-        # self.install_apk()
+        self.install_apk()
         self.gather_info()
         logcat_watcher = self.start_logcat_daemon()
         self.start_app()
         while logcat_watcher.is_alive():
             self.gather_info()
-        print 'main------{0}'.format(self.logcat_result['is_passed'])
-        print self.logcat_data
         self._save_logcat_data()
+        self.stop_app()
+        self._check_finished()
         self.lock_device()
         self._save_result()
 
@@ -111,7 +111,10 @@ class ApkChecker(object):
             self._error_log('install {0} to device {1} failed: {2}'.format(self.apk_file, self.serialno, ret))
 
     def start_app(self):
-        self._run_wrapper('adb shell am start -n {0}/{1}'.format(self.package, self.activity))
+        self._run_wrapper('adb -s {0} shell am start -n {1}/{2}'.format(self.serialno, self.package, self.activity))
+
+    def stop_app(self):
+        self._run_wrapper('adb -s {0} shell am force-stop {1}'.format(self.serialno, self.package))
 
     def is_app_alive(self):
         return True if self.package in self.adb.shell('ps') else False
@@ -150,25 +153,110 @@ class ApkChecker(object):
 
     def watch_logcat(self, logcat_data, logcat_result):
         logcat_subp = self.start_logcat()
-        # keep reading form logcat subprocess
-        # while logcat_subp.poll() is None:
-        #     line = logcat_subp.stdout.readline().decode('utf-8', 'replace').strip()
-        #     if len(line):
-        #         break
 
-        for i in range(1, 10):
+        # locat regex filter
+        LOG_LINE = re.compile(r'^([A-Z])/(.+?)\( *(\d+)\): (.*?)$')
+        BUG_LINE = re.compile(r'.*nativeGetEnabledTags.*')
+        BACKTRACE_LINE = re.compile(r'^#(.*?)pc\s(.*?)$')
+
+        pids = set()
+        app_pid = None
+        last_log_time = time.time()
+        # keep reading form logcat subprocess
+        while logcat_subp.poll() is None:
+            elapsed_time = time.time() - last_log_time
+            if elapsed_time > 10:
+                break
+            line = logcat_subp.stdout.readline().decode('utf-8', 'replace').strip()
+            if len(line) == 0:
+                break
+            bug_line = BUG_LINE.match(line)
+            if bug_line is not None:
+                continue
+            log_line = LOG_LINE.match(line)
+            if log_line is None:
+                continue
+            force_write_log = False
+            level, tag, owner, message = log_line.groups()
+            # parse start proc log to get package pid
+            start = self._parse_start_proc(line)
+            if start is not None:
+                line_package, target, line_pid, line_uid, line_gids = start
+                if self.package in line_package:
+                    app_pid = line_pid
+                    pids.add(app_pid)
+                    force_write_log = True
+            # parse death proc log
+            dead_pid, dead_pname = self._parse_death_proc(tag, message, self.package, pids)
+            if dead_pid:
+                pids.remove(dead_pid)
+                logcat_result['is_passed'] = 0
+                force_write_log = True
+            # make sure the backtrace is printed after a native crash
+            if tag.strip() == 'DEBUG':
+                bt_line = BACKTRACE_LINE.match(message.lstrip())
+                if bt_line is not None:
+                    message = message.lstrip()
+                    owner = app_pid
+            # filter logcat by pid
+            if not force_write_log:
+                if owner not in pids:
+                    continue
+            # now we have desired logcat content
+            last_log_time = time.time()
             log_content = {
                 'timestamp': self.get_timestamp(),
                 'type': 'logcat',
-                'tag': 'tag{0}'.format(i),
-                'text': 'text{0}'.format(i),
-                'level': 'level{0}'.format(i)
+                'tag': tag,
+                'text': message,
+                'level': level
             }
-            time.sleep(1)
             if self.log_verbose:
                 print >> sys.stdout, log_content
             logcat_data.append(log_content)
         logcat_result['is_passed'] = 1
+
+    @staticmethod
+    def _parse_start_proc(line):
+        PID_START = re.compile(r'^.*: Start proc ([a-zA-Z0-9._:]+) for ([a-z]+ [^:]+): pid=(\d+) uid=(\d+) gids=(.*)$')
+        PID_START_DALVIK = re.compile(
+            r'^E/dalvikvm\(\s*(\d+)\): >>>>> ([a-zA-Z0-9._:]+) \[ userId:0 \| appId:(\d+) \]$')
+        start = PID_START.match(line)
+        if start is not None:
+            line_package, target, line_pid, line_uid, line_gids = start.groups()
+            return line_package, target, line_pid, line_uid, line_gids
+        start = PID_START_DALVIK.match(line)
+        if start is not None:
+            line_pid, line_package, line_uid = start.groups()
+            return line_package, '', line_pid, line_uid, ''
+        return None
+
+    @staticmethod
+    def _parse_death_proc(tag, message, package, pids):
+        PID_KILL = re.compile(r'^Killing (\d+):([a-zA-Z0-9._:]+)/[^:]+: (.*)$')
+        PID_LEAVE = re.compile(r'^No longer want ([a-zA-Z0-9._:]+) \(pid (\d+)\): .*$')
+        PID_DEATH = re.compile(r'^Process ([a-zA-Z0-9._:]+) \(pid (\d+)\) has died.?$')
+        if tag != 'ActivityManager':
+            return None, None
+        kill = PID_KILL.match(message)
+        if kill:
+            pid = kill.group(1)
+            package_line = kill.group(2)
+            if package in package_line and pid in pids:
+                return pid, package_line
+        leave = PID_LEAVE.match(message)
+        if leave:
+            pid = leave.group(2)
+            package_line = leave.group(1)
+            if package in package_line and pid in pids:
+                return pid, package_line
+        death = PID_DEATH.match(message)
+        if death:
+            pid = death.group(2)
+            package_line = death.group(1)
+            if package in package_line and pid in pids:
+                return pid, package_line
+        return None, None
 
     def start_logcat(self):
         # clear log before starting logcat
@@ -229,6 +317,7 @@ class ApkChecker(object):
             print >> sys.stdout, log_content
 
     def _save_logcat_data(self):
+        self.result['apk_result']['passed'] = self.logcat_result['is_passed']
         self.result['running_log'].extend(self.logcat_data)
 
     def _data_log(self, timestamp, cpu_data, mem_data, screenshot):
