@@ -27,6 +27,7 @@ class ApkChecker(object):
         # manipulate locat data between process
         manager = Manager()
         self.logcat_data = manager.list()
+        self.logcat_result = manager.dict()
 
         try:
             self.apk_file = self.conf_data['apk_file']
@@ -83,6 +84,7 @@ class ApkChecker(object):
         self.start_app()
         while logcat_watcher.is_alive():
             self.gather_info()
+        print 'main------{0}'.format(self.logcat_result['is_passed'])
         print self.logcat_data
         self._save_logcat_data()
         self.lock_device()
@@ -141,13 +143,19 @@ class ApkChecker(object):
         return '{0}.png'.format(timestamp)
 
     def start_logcat_daemon(self):
-        logcat_watcher = Process(target=self.watch_logcat, args=(self.logcat_data,))
+        logcat_watcher = Process(target=self.watch_logcat, args=(self.logcat_data, self.logcat_result))
         logcat_watcher.daemon = True
         logcat_watcher.start()
         return logcat_watcher
 
-    def watch_logcat(self, logcat_data):
+    def watch_logcat(self, logcat_data, logcat_result):
         logcat_subp = self.start_logcat()
+        # keep reading form logcat subprocess
+        # while logcat_subp.poll() is None:
+        #     line = logcat_subp.stdout.readline().decode('utf-8', 'replace').strip()
+        #     if len(line):
+        #         break
+
         for i in range(1, 10):
             log_content = {
                 'timestamp': self.get_timestamp(),
@@ -160,6 +168,7 @@ class ApkChecker(object):
             if self.log_verbose:
                 print >> sys.stdout, log_content
             logcat_data.append(log_content)
+        logcat_result['is_passed'] = 1
 
     def start_logcat(self):
         # clear log before starting logcat
