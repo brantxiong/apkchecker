@@ -14,7 +14,7 @@ apkchecker is based on following projects:
 pip install -U setuptools  # if needed
 easy_install --upgrade androidviewclient
 ```
-* aapt: <https://code.google.com/p/android-apktool/>
+* aapt: <https://developer.android.com/sdk/index.html#Other>
 
 ## Usage
 Write your own config file and run
