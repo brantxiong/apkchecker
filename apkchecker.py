@@ -141,7 +141,7 @@ class ApkChecker(object):
         return round(float(cpu), 2)
 
     def take_screenshot(self, timestamp):
-        full_file_path = os.path.join(self.screenshot_path, str(timestamp))
+        full_file_path = os.path.join(self.screenshot_path, str(timestamp)+'.png')
         self.adb.takeSnapshot(reconnect=True).save(full_file_path, 'PNG')
         return '{0}.png'.format(timestamp)
 
