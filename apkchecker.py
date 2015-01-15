@@ -106,7 +106,7 @@ class ApkChecker(object):
             self.adb.shell('input keyevent POWER')
 
     def install_apk(self):
-        ret = self._run_wrapper('adb -s {0} install {1}'.format(self.serialno, self.apk_file))
+        ret = self._run_wrapper('adb -s {0} install -r {1}'.format(self.serialno, self.apk_file))
         if "Failure " in ret:
             self._error_log('install {0} to device {1} failed: {2}'.format(self.apk_file, self.serialno, ret))
 
