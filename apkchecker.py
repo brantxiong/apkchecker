@@ -32,6 +32,9 @@ class LogcatWatcher(object):
         adb_logcat_cmd = shlex.split('adb -s {0} logcat'.format(self.serialno))
         return subprocess.Popen(adb_logcat_cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE)
 
+    def stop_logcat(self):
+        self.logcat_proc.kill()
+
     def watch_logcat(self, logcat_data, logcat_result):
         # locat regex filter
         LOG_LINE = re.compile(r'^([A-Z])/(.+?)\( *(\d+)\): (.*?)$')
@@ -44,7 +47,9 @@ class LogcatWatcher(object):
         # keep reading form logcat subprocess
         while self.logcat_proc.poll() is 0 or self.logcat_proc.poll() is None:
             elapsed_time = time.time() - last_log_time
-            if elapsed_time > 10:
+            if elapsed_time > 60:
+                break
+            if 'is_passed' in logcat_result and logcat_result['is_passed'] is 1:
                 break
             line = self.logcat_proc.stdout.readline().decode('utf-8', 'replace').strip()
             if len(line) == 0:
@@ -93,8 +98,9 @@ class LogcatWatcher(object):
             if self.log_verbose:
                 print >> sys.stdout, log_content
             logcat_data.append(log_content)
-        self.logcat_proc.kill()
+        self.stop_logcat()
         logcat_result['is_passed'] = 1
+
 
     @staticmethod
     def _parse_start_proc(line):
@@ -210,12 +216,16 @@ class ApkChecker(object):
         self.gather_info()
         logcat_watcher = self.start_logcat_daemon()
         self.start_app()
+        begin_time = time.time()
         while logcat_watcher.is_alive():
+            if time.time() - begin_time > 180:
+                self.logcat_result['is_passed'] = 1
+                break
             self.gather_info()
         self._save_logcat_data()
         self.stop_app()
         self._check_finished()
-        self.lock_device()
+        self.uninstall_apk()
         self._save_result()
 
     def unlock_device(self):
@@ -223,9 +233,9 @@ class ApkChecker(object):
             # wake screen on
             self.adb.wake()
             # try unlock screen
-            if self.adb.isLocked():
-                (w, h) = (self.adb.getProperty("display.width"), self.adb.getProperty("display.height"))
-                self.adb.drag((w * 0.5, h * 0.7), (w, h * 0.7))
+            # if self.adb.isLocked():
+            #     (w, h) = (self.adb.getProperty("display.width"), self.adb.getProperty("display.height"))
+            #     self.adb.drag((w * 0.5, h * 0.7), (w, h * 0.7))
         except Exception as e:
             self._error_log('device not support screen unlock: {0}'.format(e))
 
@@ -237,6 +247,11 @@ class ApkChecker(object):
         ret = self._run_wrapper('adb -s {0} install -r {1}'.format(self.serialno, self.apk_file))
         if "Failure " in ret:
             self._error_log('install {0} to device {1} failed: {2}'.format(self.apk_file, self.serialno, ret))
+
+    def uninstall_apk(self):
+        ret = self._run_wrapper('adb -s {0} uninstall {1}'.format(self.serialno, self.package))
+        if "Failure " in ret:
+            self._error_log('uninstall {0} to device {1} failed: {2}'.format(self.apk_file, self.serialno, ret))
 
     def start_app(self):
         self._run_wrapper('adb -s {0} shell am start -n {1}/{2}'.format(self.serialno, self.package, self.activity))
